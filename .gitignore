@@ -8,5 +8,4 @@ yarn-error.log*
 *.local
 client/node_modules
 server/node_modules
-
 .vercel

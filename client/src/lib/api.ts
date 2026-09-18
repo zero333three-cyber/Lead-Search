@@ -28,8 +28,6 @@ export type LeadsStats = {
   bySource: Record<string, number>;
 };
 
-const API_BASE = '';
-
 async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
   if (!res.ok) {
@@ -47,8 +45,6 @@ export async function fetchLeads(params: {
   country?: string;
   status?: string;
   sort?: 'asc' | 'desc';
-  dateFrom?: string;
-  dateTo?: string;
 }): Promise<LeadsResponse> {
   const qs = new URLSearchParams();
   if (params.page) qs.set('page', String(params.page));
@@ -58,8 +54,6 @@ export async function fetchLeads(params: {
   if (params.country && params.country !== 'All') qs.set('country', params.country);
   if (params.status && params.status !== 'All') qs.set('status', params.status);
   if (params.sort) qs.set('sort', params.sort);
-  if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
-  if (params.dateTo) qs.set('dateTo', params.dateTo);
   return req(`/api/leads?${qs.toString()}`);
 }
 
@@ -74,9 +68,6 @@ export async function updateLeadStatus(id: string, status: LeadStatus): Promise<
 }
 export async function deleteLead(id: string) {
   return req(`/api/leads/${id}`, { method: 'DELETE' });
-}
-export async function ingestLeads(leads: Partial<Lead>[]) {
-  return req('/api/leads/ingest', { method: 'POST', body: JSON.stringify({ leads }) });
 }
 
 export function formatDate(dateStr: string) {
@@ -100,21 +91,19 @@ export function formatRelative(dateStr: string) {
 export function groupByDate(leads: Lead[]) {
   const groups: Record<string, Lead[]> = {};
   leads.forEach(l => {
-    const key = new Date(l.date).toLocaleDateString('en-CA'); // YYYY-MM-DD
+    const key = new Date(l.date).toLocaleDateString('en-CA');
     if (!groups[key]) groups[key] = [];
     groups[key].push(l);
   });
-  // sort keys desc
   const sorted = Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
   return sorted;
 }
-export function getSourceColor(source: string) {
+export function sourceColor(source: string) {
   const s = source.toLowerCase();
   if (s.includes('reddit')) return '#FF4500';
   if (s.includes('hacker')) return '#FF6600';
   if (s.includes('remoteok')) return '#0ea5e9';
   if (s.includes('wework')) return '#16a34a';
-  if (s.includes('indie')) return '#8b5cf6';
-  if (s.includes('freelan')) return '#06b6d4';
-  return 'var(--primary)';
+  if (s.includes('indie')) return '#7c3aed';
+  return '#2563eb';
 }

@@ -6,7 +6,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  console.warn('[supabase] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env');
+  console.warn('[supabase] Missing SUPABASE_URL or SERVICE_ROLE_KEY');
 }
 
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {

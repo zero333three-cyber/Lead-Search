@@ -1,36 +1,35 @@
-# Lead-Search � Production Leads Inbox (Supabase + Vercel)
+# Lead-Search — Clean Leads Dashboard
 
-Production-grade replacement for Google Sheets. Every lead from your n8n workflow appears as a **box** grouped by date/time. Click any box to view full details (Title, Link, Matched Keyword, Snippet, Source, Country, Status).
+Standalone production dashboard for your n8n `Agency Lead Finder` workflow. No portfolio, no extra UI — just clean boxes.
+
+- Each n8n run creates **boxes** grouped by **date** with timestamp
+- Click any box → **modal** with full details: `Title, Link, Matched Keyword, Snippet, Source, Country, Status, Date`
+- Filters, search, pagination, status workflow, dedup by `Link`
 
 ## Live
-- App: https://lead-search.vercel.app (after deploy)
-- API: `https://lead-search.vercel.app/api/leads` (health: `/api/health`)
+- App: `https://leadsearchcheck.vercel.app` → open `/` to see dashboard
+- API: `/api/health`, `/api/leads`, `/api/leads/stats`, `POST /api/leads/ingest`
 
 ## Stack
-- Supabase (Project `urwdxfrgsbrbmeuwtyrx` ap-south-1) ? `public.leads` with RLS, unique `link`, indexes
-- Express API (`server/index.js` + `api/index.js` for Vercel serverless) � CRUD + `POST /api/leads/ingest` dedup
-- Vite React (`client`) � /leads inbox: box grid, drawer, filters, pagination, status workflow
-- n8n: 11 sources ? Filter & Tag Leads ? Aggregate ? POST /api/leads/ingest
+- Supabase `urwdxfrgsbrbmeuwtyrx` (ap-south-1) table `public.leads`
+- Express `server/` + `api/index.js` (Vercel serverless)
+- Vite React `client/` — clean, minimal UI
 
-## Quick Start Local
+## Run Local
 ```bash
 npm install && npm --prefix client install && npm --prefix server install
-# set server/.env: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
-npm run dev  # client @5173 + server @4000
-# open http://localhost:5173/leads
+# set server/.env — see server/.env.example
+npm run dev # client 5173 + server 4000
 ```
 
 ## Vercel Deploy
-Build: `npm --prefix client run build` ? `client/dist`
-Env vars (Vercel Dashboard ? Settings ? Environment Variables):
-- SUPABASE_URL
-- SUPABASE_ANON_KEY
-- SUPABASE_SERVICE_ROLE_KEY
-- LEADS_WEBHOOK_SECRET (optional)
+Build: `npm --prefix client run build` → `client/dist`
+Env (Vercel → Settings → Environment Variables):
+```
+SUPABASE_URL=https://urwdxfrgsbrbmeuwtyrx.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+```
 
-## n8n Migration
-Delete `Append Lead to Google Sheet` node, add Code `Aggregate Leads for Bulk Ingest` + HTTP Request `POST https://YOUR_DOMAIN/api/leads/ingest` with body `={{ $json }}` containing `{leads:[...]}`. See `docs/N8N_MIGRATION.json`.
-
-## Docs
-- `docs/LEADS_PRODUCTION_README.md` � full API + DB + deployment guide
-- `docs/N8N_MIGRATION.json` � nodes to import
+## n8n Setup
+Delete `Append Lead to Google Sheet` → add `Aggregate` Code + `HTTP Request POST https://YOUR_DOMAIN/api/leads/ingest` with body `{{ $json }}` containing `{leads:[...]}`. Server accepts both Sheet keys (`Title/Link`) and dedupes by `Link`.
