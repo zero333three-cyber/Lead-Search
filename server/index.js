@@ -111,20 +111,26 @@ function applyFilters(query, { search, source, country, status, dateFrom, dateTo
 
 // --- Leads API ---
 
-// Stats - must be before /:id
+let _statsCache = null;
+let _statsAt = 0;
+ // Stats - must be before /:id (parallel + cached 15s)
 app.get('/api/leads/stats', async (req, res) => {
   try {
-    const { count: total } = await supabaseAdmin.from('leads').select('*', { count: 'exact', head: true });
-    const { count: newCount } = await supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'New');
-    const { count: contacted } = await supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Contacted');
-    const { count: qualified } = await supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Qualified');
-    const { count: indian } = await supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('country', 'Indian');
-    const { count: foreign } = await supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('country', 'Foreign');
-    // Top sources
-    const { data: recent } = await supabaseAdmin.from('leads').select('source').limit(1000);
+    if (_statsCache && Date.now() - _statsAt < 15000) return res.json(_statsCache);
+    const [totalRes, newRes, contactedRes, qualifiedRes, indianRes, foreignRes, recentRes] = await Promise.all([
+      supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'New'),
+      supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Contacted'),
+      supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'Qualified'),
+      supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('country', 'Indian'),
+      supabaseAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('country', 'Foreign'),
+      supabaseAdmin.from('leads').select('source').limit(500)
+    ]);
     const bySource = {};
-    (recent || []).forEach(r => { bySource[r.source] = (bySource[r.source] || 0) + 1; });
-    res.json({ total: total || 0, new: newCount || 0, contacted: contacted || 0, qualified: qualified || 0, indian: indian || 0, foreign: foreign || 0, bySource });
+    (recentRes.data || []).forEach(r => { bySource[r.source] = (bySource[r.source] || 0) + 1; });
+    const result = { total: totalRes.count || 0, new: newRes.count || 0, contacted: contactedRes.count || 0, qualified: qualifiedRes.count || 0, indian: indianRes.count || 0, foreign: foreignRes.count || 0, bySource };
+    _statsCache = result; _statsAt = Date.now();
+    res.json(result);
   } catch (e) {
     console.error('stats error', e);
     res.status(500).json({ error: 'Failed to fetch stats' });
