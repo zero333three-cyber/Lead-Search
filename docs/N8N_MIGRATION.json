@@ -1,0 +1,79 @@
+{
+  "note": "PRODUCTION REPLACEMENT FOR GOOGLE SHEETS NODE - Use this in your n8n workflow. Replaces 'Append Lead to Google Sheet' node.",
+  "instructions": [
+    "1. Open your n8n workflow 'Agency Lead Finder'",
+    "2. Delete node 'Append Lead to Google Sheet' (sheets-append)",
+    "3. Add new nodes as defined in 'nodesToAdd' below, in order",
+    "4. Connect 'Filter & Tag Leads' -> 'Aggregate Leads for Bulk Ingest' -> 'POST to Leads API'",
+    "5. In 'POST to Leads API', set URL to your deployed server: https://YOUR_DOMAIN/api/leads/ingest",
+    "6. For local testing, use http://localhost:4000/api/leads/ingest",
+    "7. If you set LEADS_WEBHOOK_SECRET in server/.env, add header X-Webhook-Secret with same value",
+    "8. Save and Execute - check your web app at /leads for new boxes"
+  ],
+  "nodesToAdd": [
+    {
+      "id": "aggregate-leads",
+      "name": "Aggregate Leads for Bulk Ingest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 280],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst leads = items.map(i => i.json).filter(j => j.Title || j.title);\n// Normalize to API format (lowercase keys) but keep n8n sheet keys as fallback - server handles both\nconst normalized = leads.map(l => ({\n  title: l.Title || l.title,\n  link: l.Link || l.link,\n  source: l.Source || l.source,\n  country: l.Country || l.country,\n  status: l.Status || l.status || 'New',\n  matched_keyword: l['Matched Keyword'] || l.matched_keyword,\n  snippet: l.Snippet || l.snippet,\n  date: l.Date || l.date || new Date().toISOString()\n}));\nreturn [{ json: { leads: normalized } }];"
+      }
+    },
+    {
+      "id": "http-post-leads",
+      "name": "POST to Leads API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [620, 280],
+      "parameters": {
+        "url": "https://YOUR_DOMAIN/api/leads/ingest",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonParameters": true,
+        "options": {},
+        "authentication": "none"
+      },
+      "notes": "Set URL to your deployed server. Body is automatically {{$json}} which is { leads: [...] }. Add header X-Webhook-Secret if configured."
+    }
+  ],
+  "alternative_single_post": {
+    "note": "If you prefer per-lead POST (simpler, no aggregate node), use this instead of aggregate+bulk:",
+    "node": {
+      "id": "http-post-single",
+      "name": "POST Single Lead to API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "url": "https://YOUR_DOMAIN/api/leads",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "title", "value": "={{ $json.Title }}" },
+            { "name": "link", "value": "={{ $json.Link }}" },
+            { "name": "source", "value": "={{ $json.Source }}" },
+            { "name": "country", "value": "={{ $json.Country }}" },
+            { "name": "status", "value": "={{ $json.Status }}" },
+            { "name": "matched_keyword", "value": "={{ $json['Matched Keyword'] }}" },
+            { "name": "snippet", "value": "={{ $json.Snippet }}" },
+            { "name": "date", "value": "={{ $json.Date }}" }
+          ]
+        },
+        "options": {}
+      }
+    }
+  },
+  "supabase_direct_alternative": {
+    "note": "Alternative: Skip backend and post directly to Supabase REST (not recommended for production due to exposing service key). Web app approach with backend is safer.",
+    "url": "https://urwdxfrgsbrbmeuwtyrx.supabase.co/rest/v1/leads",
+    "headers": {
+      "apikey": "YOUR_SERVICE_ROLE_OR_ANON_KEY",
+      "Authorization": "Bearer YOUR_SERVICE_ROLE_KEY",
+      "Content-Type": "application/json",
+      "Prefer": "return=representation, resolution=ignore-duplicates"
+    }
+  }
+}
