@@ -137,6 +137,52 @@ app.get('/api/leads/stats', async (req, res) => {
   }
 });
 
+// Groups by date (for fast initial load - only date/time boxes) - supports filters
+app.get('/api/leads/groups', async (req, res) => {
+  try {
+    const search = (req.query.search || '').toString().trim().slice(0,200);
+    const source = (req.query.source || 'All').toString();
+    const country = (req.query.country || 'All').toString();
+    const status = (req.query.status || 'All').toString();
+    let query = supabaseAdmin.from('leads').select('date, source, country, status, title, snippet, link, matched_keyword').order('date', { ascending: false }).limit(1000);
+    // apply same filters as leads (search via or)
+    if (search) {
+      const term = `%${search.replace(/%/g, '\%')}%`;
+      query = query.or(`title.ilike.${term},snippet.ilike.${term},link.ilike.${term},matched_keyword.ilike.${term},source.ilike.${term}`);
+    }
+    if (source && source !== 'All') query = query.eq('source', source);
+    if (country && country !== 'All') query = query.eq('country', country);
+    if (status && status !== 'All') query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) throw error;
+    const groups = {};
+    (data || []).forEach(row => {
+      const key = new Date(row.date).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      if (!groups[key]) groups[key] = { dateKey: key, count: 0, sources: new Set(), firstDate: row.date, lastDate: row.date };
+      groups[key].count += 1;
+      groups[key].sources.add(row.source);
+      if (new Date(row.date) < new Date(groups[key].firstDate)) groups[key].firstDate = row.date;
+      if (new Date(row.date) > new Date(groups[key].lastDate)) groups[key].lastDate = row.date;
+    });
+    const result = Object.values(groups).map(g => ({
+      dateKey: g.dateKey,
+      count: g.count,
+      sources: [...g.sources],
+      firstDate: g.firstDate,
+      lastDate: g.lastDate,
+      label: new Date(g.dateKey).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'Asia/Kolkata' }),
+      fullLabel: new Date(g.dateKey).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }),
+      time: new Date(g.lastDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) + ' IST',
+      time24: new Date(g.lastDate).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }),
+      iso: g.lastDate
+    })).sort((a,b) => b.dateKey.localeCompare(a.dateKey));
+    res.json(result);
+  } catch (e) {
+    console.error('groups error', e);
+    res.status(500).json({ error: 'Failed to fetch groups' });
+  }
+});
+
 // Distinct values for filter dropdowns
 app.get('/api/leads/meta', async (req, res) => {
   try {

@@ -1,30 +1,52 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { fetchLeads, fetchStats, fetchMeta, updateLeadStatus, deleteLead, Lead, LeadsStats, groupByDate, sourceColor } from './lib/api';
+import { fetchLeads, fetchGroups, fetchStats, fetchMeta, updateLeadStatus, deleteLead, Lead, Group, LeadsStats, formatIST, formatRelative, sourceColor } from './lib/api';
 
 const STATUS_OPTIONS = ['All', 'New', 'Contacted', 'Qualified', 'Closed', 'Archived'] as const;
 const COUNTRY_OPTIONS = ['All', 'Foreign', 'Indian', 'Unknown'] as const;
 
-function formatIST(dateStr: string) {
-  const d = new Date(dateStr);
-  const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'Asia/Kolkata' });
-  const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) + ' IST';
-  return { date, time };
-}
-function formatRelative(dateStr: string) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
+function ClockSVG({ iso, size = 56 }: { iso: string; size?: number }) {
+  const d = new Date(iso);
+  // get IST hours/minutes
+  const ist = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const h = ist.getHours() % 12;
+  const m = ist.getMinutes();
+  const hourAngle = (h + m / 60) * 30;
+  const minuteAngle = m * 6;
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <linearGradient id="cg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#2563eb" />
+          <stop offset="100%" stopColor="#06b6d4" />
+        </linearGradient>
+        <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.12" />
+        </filter>
+      </defs>
+      <circle cx="50" cy="50" r="46" fill="white" stroke="#e2e8f0" strokeWidth="2" filter="url(#sh)" />
+      <circle cx="50" cy="50" r="42" fill="#f8fafc" />
+      {/* ticks */}
+      {Array.from({ length: 12 }).map((_, i) => {
+        const angle = i * 30;
+        const isHour = i % 3 === 0;
+        const r1 = isHour ? 38 : 40;
+        const r2 = 42;
+        const x1 = 50 + r1 * Math.sin((angle * Math.PI) / 180);
+        const y1 = 50 - r1 * Math.cos((angle * Math.PI) / 180);
+        const x2 = 50 + r2 * Math.sin((angle * Math.PI) / 180);
+        const y2 = 50 - r2 * Math.cos((angle * Math.PI) / 180);
+        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={isHour ? '#334155' : '#cbd5e1'} strokeWidth={isHour ? 1.8 : 1} strokeLinecap="round" />;
+      })}
+      <line x1="50" y1="50" x2="50" y2="32" transform={`rotate(${hourAngle} 50 50)`} stroke="#0f172a" strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="50" y1="50" x2="50" y2="22" transform={`rotate(${minuteAngle} 50 50)`} stroke="url(#cg)" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="50" cy="50" r="4.5" fill="#0f172a" />
+      <circle cx="50" cy="50" r="2" fill="white" />
+    </svg>
+  );
 }
 
 export default function App() {
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [stats, setStats] = useState<LeadsStats | null>(null);
   const [meta, setMeta] = useState<{ sources: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,70 +56,114 @@ export default function App() {
   const [country, setCountry] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [sort, setSort] = useState<'desc' | 'asc'>('desc');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Lead | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [debounced, setDebounced] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [groupLeads, setGroupLeads] = useState<Record<string, Lead[]>>({});
+  const [groupLoading, setGroupLoading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 350);
     return () => clearTimeout(t);
   }, [search]);
 
-  // cache meta/stats - fetch only once or when needed
-  const [metaLoaded, setMetaLoaded] = useState(false);
-  const load = useCallback(async (p = 1, showLoading = true) => {
+  const loadGroups = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     else setRefreshing(true);
     setError(null);
     try {
-      const leadsPromise = fetchLeads({ page: p, limit: 24, search: debounced || undefined, source, country, status: statusFilter, sort });
-      const needsMeta = !metaLoaded;
-      const results = await Promise.all([
-        leadsPromise,
-        needsMeta ? fetchMeta().catch(() => null) : Promise.resolve(null),
-        // stats cached for 15s on server, fetch every time but cheap now (parallel)
+      const [g, st, mt] = await Promise.all([
+        fetchGroups({ search: debounced || undefined, source, country, status: statusFilter }),
         fetchStats().catch(() => null),
+        fetchMeta().catch(() => null),
       ]);
-      const res = results[0] as any;
-      const mt = results[1] as any;
-      const st = results[2] as any;
-      setLeads(res.data);
-      setTotal(res.pagination.total);
-      setTotalPages(res.pagination.totalPages || 1);
-      setPage(res.pagination.page);
-      if (mt) { setMeta(mt); setMetaLoaded(true); }
+      setGroups(g);
       if (st) setStats(st);
+      if (mt) setMeta(mt);
     } catch (e: any) {
       setError(e.message || 'Failed to load');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [debounced, source, country, statusFilter, sort, metaLoaded]);
+  }, [debounced, source, country, statusFilter]);
 
-  useEffect(() => { load(1); }, [load]);
+  useEffect(() => {
+    loadGroups(true);
+    // clear expanded when filters change
+    setExpanded(new Set());
+    setGroupLeads({});
+  }, [loadGroups]);
 
-  const grouped = useMemo(() => groupByDate(leads), [leads]);
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2200); };
+
+  const toggleGroup = async (g: Group) => {
+    const key = g.dateKey;
+    const isOpen = expanded.has(key);
+    if (isOpen) {
+      const next = new Set(expanded);
+      next.delete(key);
+      setExpanded(next);
+      return;
+    }
+    // open
+    const next = new Set(expanded);
+    next.add(key);
+    setExpanded(next);
+    if (groupLeads[key]) return; // already fetched
+    setGroupLoading(s => ({ ...s, [key]: true }));
+    try {
+      const from = new Date(key + 'T00:00:00+05:30').toISOString();
+      const to = new Date(key + 'T23:59:59+05:30').toISOString();
+      const res = await fetchLeads({ search: debounced || undefined, source, country, status: statusFilter, sort, dateFrom: from, dateTo: to, limit: 50 });
+      setGroupLeads(s => ({ ...s, [key]: res.data }));
+    } catch (e: any) {
+      showToast(e.message || 'Failed to load leads for date');
+    } finally {
+      setGroupLoading(s => ({ ...s, [key]: false }));
+    }
+  };
 
   const handleStatus = async (lead: Lead, ns: string) => {
     try {
       const upd = await updateLeadStatus(lead.id, ns as any);
-      setLeads(prev => prev.map(l => l.id === lead.id ? upd : l));
+      // update in groupLeads
+      setGroupLeads(prev => {
+        const next: Record<string, Lead[]> = {};
+        for (const k in prev) next[k] = prev[k].map(l => l.id === lead.id ? upd : l);
+        return next;
+      });
       if (selected?.id === lead.id) setSelected(upd);
       showToast(`Status → ${ns}`);
-      // stats will refresh on next load via cache expiry
     } catch (e:any) { showToast(e.message || 'Update failed'); }
   };
   const handleDelete = async (lead: Lead) => {
     if (!confirm(`Delete "${lead.title.slice(0,60)}..."?`)) return;
-    try { await deleteLead(lead.id); setLeads(p=>p.filter(l=>l.id!==lead.id)); if(selected?.id===lead.id) setSelected(null); setTotal(t=>Math.max(0,t-1)); showToast('Deleted'); } catch (e:any){ showToast(e.message); }
+    try {
+      await deleteLead(lead.id);
+      setGroupLeads(prev => {
+        const next: Record<string, Lead[]> = {};
+        for (const k in prev) next[k] = prev[k].filter(l => l.id !== lead.id);
+        return next;
+      });
+      // also update groups count and stats
+      setGroups(prev => prev.map(g => {
+        // if deleted lead belonged to this group, decrement
+        const leads = groupLeads[g.dateKey] || [];
+        if (leads.some(l => l.id === lead.id)) return { ...g, count: Math.max(0, g.count - 1) };
+        return g;
+      }).filter(g => g.count > 0));
+      if(selected?.id===lead.id) setSelected(null);
+      showToast('Deleted');
+      // refresh stats quickly
+      fetchStats().then(setStats).catch(()=>{});
+    } catch (e:any){ showToast(e.message); }
   };
   const copy = async (v:string) => { await navigator.clipboard.writeText(v); showToast('Copied'); };
+
+  const totalLeads = useMemo(() => groups.reduce((a, g) => a + g.count, 0), [groups]);
 
   return (
     <div className="app">
@@ -114,11 +180,11 @@ export default function App() {
             </div>
             <div>
               <h1>LeadSearch</h1>
-              <p>Clean leads inbox • Boxes by date • IST</p>
+              <p>Clean inbox • Boxes by date • IST</p>
             </div>
           </div>
           <div className="header-actions">
-            <button className="btn" onClick={()=>load(page,false)} disabled={refreshing}>{refreshing?'Refreshing…':'↻ Refresh'}</button>
+            <button className="btn" onClick={()=>loadGroups(false)} disabled={refreshing}>{refreshing?'Refreshing…':'↻ Refresh'}</button>
             <a className="btn btn-primary" href="https://supabase.com/dashboard/project/urwdxfrgsbrbmeuwtyrx" target="_blank" rel="noreferrer">Supabase ↗</a>
           </div>
         </div>
@@ -127,11 +193,11 @@ export default function App() {
       <main className="main">
         <div className="page-head">
           <h2>Leads Inbox</h2>
-          <p>Each box is a lead — image, date <b>DD-MM-YY</b> + <b>time IST</b> at top. Click any box to open all files generated at that time.</p>
+          <p>Only <b>date & time</b> boxes are shown. Click any date box to see all leads generated at that time. No messy grid until you open a box.</p>
         </div>
 
         <div className="stats">
-          <div className="stat"><strong>{stats?.total ?? total}</strong><span>Total</span></div>
+          <div className="stat"><strong>{stats?.total ?? totalLeads}</strong><span>Total</span></div>
           <div className="stat accent"><strong>{stats?.new ?? 0}</strong><span>New</span></div>
           <div className="stat"><strong>{stats?.contacted ?? 0}</strong><span>Contacted</span></div>
           <div className="stat"><strong>{stats?.indian ?? 0}</strong><span>Indian</span></div>
@@ -153,15 +219,17 @@ export default function App() {
         </div>
 
         <div className="meta">
-          <span>{loading ? 'Loading…' : `${total} leads • Page ${page}/${totalPages}${debounced?` • “${debounced}”`:''}`}</span>
-          <span>Data via Supabase • IST • Dedup by link</span>
+          <span>{loading ? 'Loading…' : `${groups.length} dates • ${totalLeads} leads${debounced?` • “${debounced}”`:''}`}</span>
+          <span>Tap a date box to expand • IST • Dedup by link</span>
         </div>
 
-        {error && <div className="error">⚠ {error}<button onClick={()=>load(page)}>Retry</button></div>}
+        {error && <div className="error">⚠ {error}<button onClick={()=>loadGroups()}>Retry</button></div>}
 
         {loading ? (
-          <div className="grid">{Array.from({length:6}).map((_,i)=>(<div key={i} className="card skeleton"><div className="img-skel"/><div className="sk h w1"/><div className="sk w2"/><div className="sk w3"/></div>))}</div>
-        ) : leads.length===0 ? (
+          <div className="groups-skeleton">
+            {Array.from({length:3}).map((_,i)=>(<div key={i} className="group-box skeleton"><div className="sk h w1"/><div className="sk w2"/></div>))}
+          </div>
+        ) : groups.length===0 ? (
           <div className="empty">
             <div className="empty-ill">📭</div>
             <h3>No leads yet</h3>
@@ -169,50 +237,66 @@ export default function App() {
             <button className="btn btn-primary" onClick={()=>{setSearch('');setSource('All');setCountry('All');setStatusFilter('All');}}>Clear filters</button>
           </div>
         ) : (
-          <>
-            {grouped.map(([key, group])=>{
-              const d=new Date(key);
-              const label = d.toLocaleDateString('en-GB', { day:'2-digit', month:'2-digit', year:'2-digit', timeZone:'Asia/Kolkata' });
-              const fullLabel = d.toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric', timeZone:'Asia/Kolkata' });
+          <div className="groups">
+            {groups.map(g=>{
+              const isOpen = expanded.has(g.dateKey);
+              const leads = groupLeads[g.dateKey] || [];
+              const loadingGroup = groupLoading[g.dateKey];
               return (
-                <div key={key} className="date-group">
-                  <div className="date-header"><span className="date-badge">{label} • {fullLabel}</span><span className="date-count">{group.length} leads</span><div className="date-line"/></div>
-                  <div className="grid">
-                    {group.map(lead=>{
-                      const {date, time} = formatIST(lead.date);
-                      const img = `https://picsum.photos/seed/${lead.id.slice(0,8)}/600/340`;
-                      return (
-                        <article key={lead.id} className="card" onClick={()=>setSelected(lead)} role="button" tabIndex={0} onKeyDown={e=>e.key==='Enter'&&setSelected(lead)}>
-                          <div className="card-img-wrap">
-                            <img src={img} alt="" loading="lazy" />
-                            <span className="img-badge" style={{background:sourceColor(lead.source)}}>{lead.source}</span>
-                          </div>
-                          <div className="card-body">
-                            <div className="time-single">{date} • {time} <span className="rel">• {formatRelative(lead.date)}</span></div>
-                            <h3 title={lead.title}>{lead.title}</h3>
-                            <div className="badges">
-                              {lead.matched_keyword && <span className="badge keyword">{lead.matched_keyword}</span>}
-                              <span className={`badge country ${lead.country.toLowerCase()}`}>{lead.country}</span>
-                            </div>
-                            <p className="snippet">{lead.snippet || 'No snippet — click for link & details'}</p>
-                            <div className="card-foot">
-                              <span className="link" onClick={e=>{e.stopPropagation(); window.open(lead.link,'_blank');}}>{(() => { try { return new URL(lead.link).hostname.replace('www.',''); } catch { return 'Link'; }})()} ↗</span>
-                              <span className="view">View →</span>
-                            </div>
-                          </div>
-                        </article>
-                      )
-                    })}
-                  </div>
+                <div key={g.dateKey} className={`group ${isOpen ? 'open' : ''}`}>
+                  <button className="group-box" onClick={()=>toggleGroup(g)} aria-expanded={isOpen}>
+                    <div className="group-left">
+                      <div className="clock-wrap">
+                        <ClockSVG iso={g.iso} size={56} />
+                      </div>
+                      <div className="group-text">
+                        <div className="group-date">{g.label} • {g.fullLabel} • {g.time}</div>
+                        <div className="group-meta">{g.count} leads • {g.sources.slice(0,3).join(', ')} {g.sources.length>3?`+${g.sources.length-3}`:''} • {formatRelative(g.iso)}</div>
+                      </div>
+                    </div>
+                    <div className="group-right">
+                      <span className="count-badge">{g.count} leads</span>
+                      <span className="chevron">{isOpen ? '▲' : '▼'}</span>
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                    <div className="group-leads">
+                      {loadingGroup ? (
+                        <div className="grid">{Array.from({length:3}).map((_,i)=>(<div key={i} className="card skeleton"><div className="sk h w1"/><div className="sk w2"/><div className="sk w3"/></div>))}</div>
+                      ) : leads.length===0 ? (
+                        <div className="empty" style={{padding:'18px'}}>No leads for this date with current filters.</div>
+                      ) : (
+                        <div className="grid">
+                          {leads.map(lead=>{
+                            const {date, time} = formatIST(lead.date);
+                            return (
+                              <article key={lead.id} className="card" onClick={()=>setSelected(lead)} role="button" tabIndex={0} onKeyDown={e=>e.key==='Enter'&&setSelected(lead)}>
+                                <div className="card-body">
+                                  <div className="time-single">{date} • {time} <span className="rel">• {formatRelative(lead.date)}</span></div>
+                                  <h3 title={lead.title}>{lead.title}</h3>
+                                  <div className="badges">
+                                    <span className="badge source" style={{background:sourceColor(lead.source)}}>{lead.source}</span>
+                                    {lead.matched_keyword && <span className="badge keyword">{lead.matched_keyword}</span>}
+                                    <span className={`badge country ${lead.country.toLowerCase()}`}>{lead.country}</span>
+                                  </div>
+                                  <p className="snippet">{lead.snippet || 'No snippet — click for link & details'}</p>
+                                  <div className="card-foot">
+                                    <span className="link" onClick={e=>{e.stopPropagation(); window.open(lead.link,'_blank');}}>{(() => { try { return new URL(lead.link).hostname.replace('www.',''); } catch { return 'Link'; }})()} ↗</span>
+                                    <span className="view">View →</span>
+                                  </div>
+                                </div>
+                              </article>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
-            <div className="pagination">
-              <button disabled={page<=1} onClick={()=>load(page-1)}>‹ Prev</button>
-              <span>Page {page} / {totalPages} • {total} leads</span>
-              <button disabled={page>=totalPages} onClick={()=>load(page+1)}>Next ›</button>
-            </div>
-          </>
+          </div>
         )}
       </main>
 
