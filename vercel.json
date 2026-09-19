@@ -1,11 +1,12 @@
 {
   "version": 2,
-  "buildCommand": "npm --prefix client run build",
   "outputDirectory": "client/dist",
   "installCommand": "npm install && npm --prefix client install && npm --prefix server install",
-  "rewrites": [
-    { "source": "/((?:_next|favicon\\.ico)(?:/.*)?)", "destination": "/$1" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "buildCommand": "npm --prefix client run build",
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ],
   "headers": [
     {
