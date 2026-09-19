@@ -250,8 +250,8 @@ export default function App() {
                         <ClockSVG iso={g.iso} size={56} />
                       </div>
                       <div className="group-text">
-                        <div className="group-date">{g.label} • {g.fullLabel} • {g.time}</div>
-                        <div className="group-meta">{g.count} leads • {g.sources.slice(0,3).join(', ')} {g.sources.length>3?`+${g.sources.length-3}`:''} • {formatRelative(g.iso)}</div>
+                        <div className="group-date">{g.fullLabel}</div>
+                        <div className="group-meta">{g.time} • {g.count} leads • {g.sources.slice(0,2).join(', ')}{g.sources.length>2?` +${g.sources.length-2}`:''}</div>
                       </div>
                     </div>
                     <div className="group-right">
