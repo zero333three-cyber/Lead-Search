@@ -4,8 +4,7 @@
   "outputDirectory": "client/dist",
   "installCommand": "npm install && npm --prefix client install && npm --prefix server install",
   "rewrites": [
-    { "source": "/((?:api|_next|favicon\\.ico)(?:/.*)?)$", "destination": "/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?:api|_next|favicon\\.ico)(?:/.*)?)", "destination": "/$1" }
   ],
   "headers": [
     {
